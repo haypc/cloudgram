@@ -1,0 +1,1 @@
+export async function api<T>(path:string, init:RequestInit={}){const res=await fetch(`/api/${path}`,{credentials:'include',headers:{'content-type':'application/json',...(init.headers||{})},...init});const data=await res.json().catch(()=>({})) as {error?:string};if(!res.ok)throw new Error(data.error||'Не удалось подключиться к CloudGram');return data as T;}

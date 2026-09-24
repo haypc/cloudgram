@@ -1,0 +1,9 @@
+name = "cloudgram"
+compatibility_date = "2026-09-24"
+pages_build_output_dir = "dist"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "socialcf-db"
+database_id = "b03b6f39-2ca3-4067-8dd6-d3700643da59"
+migrations_dir = "database/migrations"

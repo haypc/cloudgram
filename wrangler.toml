@@ -4,6 +4,6 @@ pages_build_output_dir = "dist"
 
 [[d1_databases]]
 binding = "DB"
-database_name = "socialcf-db"
-database_id = "b03b6f39-2ca3-4067-8dd6-d3700643da59"
+database_name = "cloudgram-db"
+database_id = "3f92bfcc-a8f1-4a41-b79f-75c18741d1c4"
 migrations_dir = "database/migrations"

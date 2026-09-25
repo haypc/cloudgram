@@ -474,8 +474,14 @@ function ChatView({
   };
   useEffect(() => {
     load();
-    const i = setInterval(load, 12000);
-    return () => clearInterval(i);
+    const source = new EventSource(
+      `/api/events?chatId=${encodeURIComponent(chat.id)}`,
+    );
+    source.addEventListener("message", load);
+    source.onerror = () => {
+      // EventSource reconnects automatically; keep the UI quiet during reconnects.
+    };
+    return () => source.close();
   }, [chat.id]);
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: "smooth" });

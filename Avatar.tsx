@@ -1,0 +1,42 @@
+const gradients: { [key: string]: string } = {
+  aurora: "linear-gradient(135deg,#7c5cff,#35d6c8)",
+  sunset: "linear-gradient(135deg,#ff8a65,#ff4d9d)",
+  mint: "linear-gradient(135deg,#37d5a3,#7dd3fc)",
+  mono: "linear-gradient(135deg,#566179,#182235)",
+};
+export function Avatar({
+  name,
+  seed,
+  style = "aurora",
+  size = "md",
+  emoji,
+}: {
+  name: string;
+  seed?: string;
+  style?: string;
+  size?: "sm" | "md" | "lg";
+  emoji?: string;
+}) {
+  const initials = name
+    .split(/\s+/)
+    .slice(0, 2)
+    .map((x) => x[0])
+    .join("")
+    .toUpperCase();
+  return (
+    <div
+      className={`avatar avatar-${size}`}
+      style={{ background: gradients[style] || gradients.aurora }}
+      aria-label={`${name} avatar`}
+    >
+      {emoji ? (
+        <span className="avatar-emoji">{emoji}</span>
+      ) : (
+        <>
+          <span>{initials || "?"}</span>
+          {seed && <i style={{ opacity: 0.16 }}>{seed.slice(0, 1)}</i>}
+        </>
+      )}
+    </div>
+  );
+}

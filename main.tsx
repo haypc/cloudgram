@@ -1,0 +1,1700 @@
+import React, { useEffect, useMemo, useRef, useState } from "react";
+import { createRoot } from "react-dom/client";
+import { AnimatePresence, motion } from "framer-motion";
+import {
+  Archive,
+  ArrowLeft,
+  AtSign,
+  Bell,
+  Blocks,
+  Check,
+  CheckCheck,
+  ChevronDown,
+  Cloud,
+  Download,
+  Edit3,
+  Hash,
+  LockKeyhole,
+  LogOut,
+  Menu,
+  MessageCircle,
+  MoreHorizontal,
+  Paperclip,
+  Pin,
+  Plus,
+  Search,
+  Send,
+  Settings,
+  Shield,
+  Smile,
+  Sparkles,
+  Trash2,
+  UserPlus,
+  Users,
+  X,
+} from "lucide-react";
+import { api } from "./lib/api";
+import { Avatar } from "./components/Avatar";
+import { EmojiPicker } from "./components/EmojiPicker";
+import { Chat, Message, User } from "./types";
+import "./styles.css";
+const fmt = (s?: string) =>
+  s
+    ? new Intl.DateTimeFormat("ru-RU", {
+        hour: "2-digit",
+        minute: "2-digit",
+      }).format(new Date(s))
+    : "";
+const TELEGRAM_SUPPORT_URL = "https://web.telegram.org/@Vwrdohh";
+let deferredInstallPrompt: any = null;
+function InstallPrompt() {
+  const [canInstall, setCanInstall] = useState(false);
+  useEffect(() => {
+    const onPrompt = (event: any) => {
+      event.preventDefault();
+      deferredInstallPrompt = event;
+      setCanInstall(true);
+    };
+    const onInstalled = () => {
+      deferredInstallPrompt = null;
+      setCanInstall(false);
+    };
+    window.addEventListener("beforeinstallprompt", onPrompt);
+    window.addEventListener("appinstalled", onInstalled);
+    if ("serviceWorker" in navigator)
+      navigator.serviceWorker.register("/sw.js").catch(() => {});
+    return () => {
+      window.removeEventListener("beforeinstallprompt", onPrompt);
+      window.removeEventListener("appinstalled", onInstalled);
+    };
+  }, []);
+  if (!canInstall)
+    return (
+      <small className="install-hint">
+        На телефоне: меню браузера → «Добавить на главный экран»
+      </small>
+    );
+  return (
+    <button
+      className="install-btn"
+      onClick={async () => {
+        if (!deferredInstallPrompt) return;
+        await deferredInstallPrompt.prompt();
+        await deferredInstallPrompt.userChoice;
+        deferredInstallPrompt = null;
+        setCanInstall(false);
+      }}
+    >
+      <Download size={15} /> Установить CloudGram
+    </button>
+  );
+}
+function Toast({ text, onClose }: { text: string; onClose: () => void }) {
+  useEffect(() => {
+    const t = setTimeout(onClose, 3500);
+    return () => clearTimeout(t);
+  }, [onClose]);
+  return (
+    <motion.div
+      initial={{ y: 20, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      className="toast"
+    >
+      {text}
+      <button onClick={onClose}>
+        <X size={14} />
+      </button>
+    </motion.div>
+  );
+}
+function Logo() {
+  return (
+    <div className="brand">
+      <div className="brand-mark">
+        <Cloud size={20} />
+      </div>
+      <div>
+        <strong>CloudGram</strong>
+        <small>text, beautifully delivered</small>
+      </div>
+    </div>
+  );
+}
+function Auth({ onAuth }: { onAuth: (u: User) => void }) {
+  const [mode, setMode] = useState<"login" | "register">("login");
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [form, setForm] = useState({
+    name: "",
+    username: "",
+    email: "",
+    password: "",
+    passwordConfirm: "",
+    remember: true,
+  });
+  const submit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setError("");
+    setBusy(true);
+    try {
+      const d = await api<{ user: User }>(`auth/${mode}`, {
+        method: "POST",
+        body: JSON.stringify(form),
+      });
+      onAuth(d.user);
+    } catch (err) {
+      setError((err as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  };
+  return (
+    <div className="auth-page">
+      <div className="auth-orbit orbit-a" />
+      <div className="auth-orbit orbit-b" />
+      <div className="auth-card">
+        <Logo />
+        <div className="auth-copy">
+          <span className="eyebrow">PRIVATE • FAST • TEXT ONLY</span>
+          <h1>
+            {mode === "login" ? "С возвращением." : "Ваше новое пространство."}
+          </h1>
+          <p>
+            {mode === "login"
+              ? "Войдите, чтобы продолжить разговор."
+              : "Создайте аккаунт и пишите без лишнего шума."}
+          </p>
+        </div>
+        <form onSubmit={submit} className="auth-form">
+          {mode === "register" && (
+            <>
+              <label>
+                Имя
+                <input
+                  autoFocus
+                  value={form.name}
+                  onChange={(e) => setForm({ ...form, name: e.target.value })}
+                  placeholder="Vardan"
+                />
+              </label>
+              <label>
+                Username
+                <input
+                  value={form.username}
+                  onChange={(e) =>
+                    setForm({ ...form, username: e.target.value })
+                  }
+                  placeholder="@username"
+                />
+                <small>3–24 символа · a-z, 0-9, _</small>
+              </label>
+            </>
+          )}
+          <label>
+            Email
+            <input
+              type="email"
+              value={form.email}
+              onChange={(e) => setForm({ ...form, email: e.target.value })}
+              placeholder="you@example.com"
+            />
+          </label>
+          <label>
+            Пароль
+            <input
+              type="password"
+              value={form.password}
+              onChange={(e) => setForm({ ...form, password: e.target.value })}
+              placeholder="Минимум 8 символов"
+            />
+          </label>
+          {mode === "register" && (
+            <label>
+              Подтвердите пароль
+              <input
+                type="password"
+                value={form.passwordConfirm}
+                onChange={(e) =>
+                  setForm({ ...form, passwordConfirm: e.target.value })
+                }
+              />
+            </label>
+          )}
+          {mode === "login" && (
+            <label className="check-row">
+              <input
+                type="checkbox"
+                checked={form.remember}
+                onChange={(e) =>
+                  setForm({ ...form, remember: e.target.checked })
+                }
+              />
+              <span>Запомнить сессию</span>
+            </label>
+          )}
+          {error && <div className="form-error">{error}</div>}
+          <button className="primary-btn" disabled={busy}>
+            {busy
+              ? "Подключение…"
+              : mode === "login"
+                ? "Войти"
+                : "Создать аккаунт"}
+            <ArrowLeft size={17} className="rotate-180" />
+          </button>
+        </form>
+        <button
+          className="switch-auth"
+          onClick={() => {
+            setMode(mode === "login" ? "register" : "login");
+            setError("");
+          }}
+        >
+          {mode === "login"
+            ? "Нет аккаунта? Создать"
+            : "Уже есть аккаунт? Войти"}
+        </button>
+        <InstallPrompt />
+        <div className="auth-foot">
+          <LockKeyhole size={13} /> Сессия защищена HttpOnly cookie
+        </div>
+      </div>
+    </div>
+  );
+}
+function ChatList({
+  chats,
+  selected,
+  onSelect,
+  onNew,
+  onNewGroup,
+  onSearch,
+  onSettings,
+}: {
+  chats: Chat[];
+  selected?: string;
+  onSelect: (c: Chat) => void;
+  onNew: () => void;
+  onNewGroup: () => void;
+  onSearch: (q: string) => void;
+  onSettings: () => void;
+}) {
+  const [q, setQ] = useState("");
+  return (
+    <aside className="chat-list">
+      <div className="list-top">
+        <Logo />
+        <button
+          className="icon-btn"
+          onClick={onSettings}
+          aria-label="Настройки"
+        >
+          <Settings size={18} />
+        </button>
+      </div>
+      <div className="search-box">
+        <Search size={16} />
+        <input
+          value={q}
+          onChange={(e) => {
+            setQ(e.target.value);
+            onSearch(e.target.value);
+          }}
+          placeholder="Найти людей или чаты"
+        />
+        <kbd>⌘ K</kbd>
+      </div>
+      <div className="list-actions">
+        <span>Ваши чаты</span>
+        <div className="list-action-buttons">
+          <button className="new-chat-btn" onClick={onNew}>
+            <Plus size={15} /> Чат
+          </button>
+          <button className="new-chat-btn" onClick={onNewGroup}>
+            <Users size={15} /> Группа
+          </button>
+        </div>
+      </div>
+      <div className="chats-scroll">
+        {chats.length === 0 && (
+          <div className="empty-list">
+            <MessageCircle size={28} />
+            <b>Пока тихо</b>
+            <span>Начните диалог с новым человеком</span>
+          </div>
+        )}
+        {chats.map((c) => (
+          <button
+            key={c.id}
+            className={`chat-row ${selected === c.id ? "selected" : ""}`}
+            onClick={() => onSelect(c)}
+          >
+            <Avatar
+              name={
+                c.kind === "direct" ? c.peer_name || "User" : c.title || "Chat"
+              }
+              seed={c.peer_avatar_seed || c.id}
+              style={c.peer_avatar_style}
+            />
+            <div className="chat-row-copy">
+              <div>
+                <b>
+                  {c.kind === "direct"
+                    ? c.peer_name || "User"
+                    : c.title || "CloudGram"}
+                </b>
+                <time>{fmt(c.last_message_at || c.updated_at)}</time>
+              </div>
+              <p>{c.last_body || "Новый разговор"}</p>
+            </div>
+            {c.unread_count > 0 && (
+              <em className="unread-pill">{c.unread_count}</em>
+            )}
+          </button>
+        ))}
+      </div>
+      <div className="list-bottom">
+        <button onClick={onSettings}>
+          <div className="mini-profile">
+            <div className="status-dot" />
+            <span>Настройки</span>
+          </div>
+          <ChevronDown size={16} />
+        </button>
+      </div>
+    </aside>
+  );
+}
+function MessageBubble({
+  m,
+  me,
+  onReact,
+  onReply,
+  onEdit,
+  onDelete,
+}: {
+  m: Message;
+  me: User;
+  onReact: (id: string, e: string) => void;
+  onReply: (m: Message) => void;
+  onEdit: (m: Message) => void;
+  onDelete: (m: Message) => void;
+}) {
+  const own = m.sender_id === me.id;
+  return (
+    <motion.div
+      layout
+      initial={{ opacity: 0, y: 8 }}
+      animate={{ opacity: 1, y: 0 }}
+      className={`message-line ${own ? "own" : ""}`}
+    >
+      <div className="message-avatar">
+        <Avatar name={m.sender_name} seed={m.sender_avatar_seed} size="sm" />
+      </div>
+      <div className="bubble-wrap">
+        <div className="bubble-meta">
+          <b>{own ? "Вы" : m.sender_name}</b>
+          <time>{fmt(m.created_at)}</time>
+          {m.edited_at && <span>изменено</span>}
+        </div>
+        <div className={`bubble ${m.deleted_at ? "deleted" : ""}`}>
+          {m.reply_to_id && (
+            <div className="reply-ref">↪ Ответ на сообщение</div>
+          )}
+          {m.deleted_at ? "Сообщение удалено" : m.body}
+        </div>
+        <div className="message-actions">
+          <button onClick={() => onReact(m.id, "❤️")}>❤️</button>
+          <button onClick={() => onReact(m.id, "👍")}>👍</button>
+          <button onClick={() => onReply(m)}>Ответить</button>
+          {own && (
+            <>
+              <button onClick={() => onEdit(m)}>
+                <Edit3 size={13} />
+              </button>
+              <button onClick={() => onDelete(m)}>
+                <Trash2 size={13} />
+              </button>
+            </>
+          )}
+        </div>
+        {m.reactions?.length > 0 && (
+          <div className="reactions">
+            {m.reactions.map((r) => (
+              <button
+                key={r.emoji}
+                className={r.mine ? "mine" : ""}
+                onClick={() => onReact(m.id, r.emoji)}
+              >
+                {r.emoji} <span>{r.count}</span>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+    </motion.div>
+  );
+}
+function ChatView({
+  chat,
+  me,
+  onBack,
+  onToast,
+  onInfo,
+}: {
+  chat: Chat;
+  me: User;
+  onBack: () => void;
+  onToast: (s: string) => void;
+  onInfo?: () => void;
+}) {
+  const [messages, setMessages] = useState<Message[]>([]);
+  const [text, setText] = useState(
+    () => localStorage.getItem(`draft:${chat.id}`) || "",
+  );
+  const [reply, setReply] = useState<Message | null>(null);
+  const [editing, setEditing] = useState<Message | null>(null);
+  const [emoji, setEmoji] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const endRef = useRef<HTMLDivElement>(null);
+  const latestSeenRef = useRef("");
+  const title =
+    chat.kind === "direct"
+      ? chat.peer_name || "User"
+      : chat.title || "CloudGram";
+  const load = async () => {
+    try {
+      const d = await api<{ messages: Message[] }>(
+        `chats/${chat.id}/messages?limit=60`,
+      );
+      setMessages(d.messages);
+      latestSeenRef.current = d.messages[d.messages.length - 1]?.id || "";
+      await api(`chats/${chat.id}/read`, { method: "POST" });
+    } catch (e) {
+      onToast((e as Error).message);
+    } finally {
+      setLoading(false);
+    }
+  };
+  useEffect(() => {
+    load();
+    const source = new EventSource(
+      `/api/events?chatId=${encodeURIComponent(chat.id)}`,
+    );
+    const onMessage = (event: MessageEvent<string>) => {
+      try {
+        const incoming = JSON.parse(event.data) as {
+          id?: string;
+          sender_id?: string;
+          body?: string;
+        };
+        if (!incoming.id || latestSeenRef.current === incoming.id) return;
+        latestSeenRef.current = incoming.id;
+      } catch {
+        // Ignore malformed realtime events and keep the chat usable.
+      }
+      load();
+    };
+    source.addEventListener("message", onMessage);
+    source.onerror = () => {
+      // EventSource reconnects automatically; keep the UI quiet during reconnects.
+    };
+    return () => source.close();
+  }, [chat.id]);
+  useEffect(() => {
+    endRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages.length]);
+  useEffect(() => {
+    localStorage.setItem(`draft:${chat.id}`, text);
+  }, [text, chat.id]);
+  const send = async () => {
+    if (!text.trim()) return;
+    try {
+      if (editing) {
+        await api(`messages/${editing.id}`, {
+          method: "PATCH",
+          body: JSON.stringify({ body: text.trim() }),
+        });
+        setEditing(null);
+      } else {
+        const d = await api<{ message: Message }>(`chats/${chat.id}/messages`, {
+          method: "POST",
+          body: JSON.stringify({ body: text.trim(), replyToId: reply?.id }),
+        });
+        setMessages((v) => [...v, d.message]);
+        setReply(null);
+      }
+      setText("");
+      localStorage.removeItem(`draft:${chat.id}`);
+      load();
+    } catch (e) {
+      onToast((e as Error).message);
+    }
+  };
+  const react = async (id: string, e: string) => {
+    try {
+      await api(`messages/${id}/reaction`, {
+        method: "POST",
+        body: JSON.stringify({ emoji: e }),
+      });
+      load();
+    } catch (e) {
+      onToast((e as Error).message);
+    }
+  };
+  const remove = async (m: Message) => {
+    if (!confirm("Удалить это сообщение?")) return;
+    try {
+      await api(`messages/${m.id}`, { method: "DELETE", body: "{}" });
+      load();
+    } catch (e) {
+      onToast((e as Error).message);
+    }
+  };
+  return (
+    <section className="conversation">
+      <header className="conversation-head">
+        <button className="mobile-back icon-btn" onClick={onBack}>
+          <ArrowLeft />
+        </button>
+        <button
+          className="chat-info-trigger"
+          onClick={onInfo}
+          aria-label="Открыть информацию о чате"
+        >
+          <Avatar
+            name={title}
+            seed={chat.peer_avatar_seed || chat.id}
+            style={chat.peer_avatar_style}
+          />
+          <div className="head-copy">
+            <b>{title}</b>
+            <span>
+              {chat.kind === "direct"
+                ? chat.peer_online
+                  ? "В сети"
+                  : "был недавно"
+                : "участники CloudGram"}
+            </span>
+          </div>
+        </button>
+        <div className="head-tools">
+          <button className="icon-btn">
+            <Search size={18} />
+          </button>
+          <button className="icon-btn">
+            <MoreHorizontal size={18} />
+          </button>
+        </div>
+      </header>
+      <div className="messages">
+        <div className="day-pill">Сегодня</div>
+        {loading ? (
+          <div className="skeletons">
+            <i />
+            <i />
+            <i />
+          </div>
+        ) : messages.length === 0 ? (
+          <div className="no-messages">
+            <div className="no-messages-art">✦</div>
+            <b>Начните разговор</b>
+            <span>Ваши сообщения появятся здесь.</span>
+          </div>
+        ) : (
+          messages.map((m) => (
+            <MessageBubble
+              key={m.id}
+              m={m}
+              me={me}
+              onReact={react}
+              onReply={setReply}
+              onEdit={(m) => {
+                setEditing(m);
+                setText(m.body);
+              }}
+              onDelete={remove}
+            />
+          ))
+        )}
+        <div ref={endRef} />
+      </div>
+      {reply && (
+        <div className="reply-bar">
+          <div>
+            <small>Ответ на сообщение</small>
+            <b>{reply.body}</b>
+          </div>
+          <button onClick={() => setReply(null)}>
+            <X size={16} />
+          </button>
+        </div>
+      )}
+      {editing && (
+        <div className="reply-bar edit-bar">
+          <Edit3 size={15} />
+          <div>
+            <small>Редактирование</small>
+            <b>{editing.body}</b>
+          </div>
+          <button
+            onClick={() => {
+              setEditing(null);
+              setText("");
+            }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+      )}
+      <div className="composer">
+        <button className="composer-icon disabled" title="Файлы отключены">
+          <Paperclip size={18} />
+        </button>
+        <div className="input-wrap">
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            placeholder="Написать сообщение…"
+            rows={1}
+          />
+          <button
+            onClick={() => setEmoji((v) => !v)}
+            className={emoji ? "active" : ""}
+          >
+            <Smile size={19} />
+          </button>
+          {emoji && (
+            <EmojiPicker
+              onPick={(e) => {
+                setText((t) => t + e);
+                setEmoji(false);
+              }}
+            />
+          )}
+        </div>
+        <button className="send-btn" onClick={send} aria-label="Отправить">
+          <Send size={18} />
+        </button>
+      </div>
+    </section>
+  );
+}
+function GroupPanel({
+  chat,
+  me,
+  onClose,
+  onLeft,
+  onToast,
+}: {
+  chat: Chat;
+  me: User;
+  onClose: () => void;
+  onLeft?: () => void;
+  onToast: (s: string) => void;
+}) {
+  type Member = {
+    id: string;
+    name: string;
+    username: string;
+    role: string;
+    avatar_seed: string;
+    avatar_style?: string;
+    is_online: number;
+  };
+  const [members, setMembers] = useState<Member[]>([]);
+  const [memberProfile, setMemberProfile] = useState<Member | null>(null);
+  const [memberBlocked, setMemberBlocked] = useState(false);
+  const load = async () => {
+    try {
+      const d = await api<{ members: Member[] }>(`groups/${chat.id}/members`);
+      setMembers(d.members);
+    } catch (e) {
+      onToast((e as Error).message);
+    }
+  };
+  useEffect(() => {
+    load();
+  }, [chat.id]);
+  const openMemberProfile = async (member: Member) => {
+    setMemberProfile(member);
+    setMemberBlocked(false);
+    try {
+      const result = await api<{ blocked: boolean }>(`blocks/${member.id}`);
+      setMemberBlocked(result.blocked);
+    } catch {
+      // The profile remains available even if the block status cannot be loaded.
+    }
+  };
+  const toggleMemberBlock = async () => {
+    if (!memberProfile || memberProfile.id === me.id) return;
+    try {
+      await api(
+        memberBlocked ? `blocks/${memberProfile.id}` : "blocks",
+        memberBlocked
+          ? { method: "DELETE" }
+          : {
+              method: "POST",
+              body: JSON.stringify({ userId: memberProfile.id }),
+            },
+      );
+      setMemberBlocked((value) => !value);
+      onToast(
+        memberBlocked
+          ? "Пользователь разблокирован"
+          : "Пользователь заблокирован",
+      );
+    } catch (e) {
+      onToast((e as Error).message);
+    }
+  };
+  const role = members.find((m) => m.id === me.id)?.role;
+  const canManage = role === "owner" || role === "admin";
+  const owner = role === "owner";
+  const add = async () => {
+    const username = prompt("Username нового участника");
+    if (!username) return;
+    try {
+      await api(`groups/${chat.id}/members`, {
+        method: "POST",
+        body: JSON.stringify({ username }),
+      });
+      await load();
+      onToast("Участник добавлен");
+    } catch (e) {
+      onToast((e as Error).message);
+    }
+  };
+  const act = async (
+    path: string,
+    method: "POST" | "DELETE",
+    userId: string,
+  ) => {
+    try {
+      await api(`groups/${chat.id}/${path}`, {
+        method,
+        body: JSON.stringify({ userId }),
+      });
+      await load();
+      onToast("Права группы обновлены");
+    } catch (e) {
+      onToast((e as Error).message);
+    }
+  };
+  const leave = async () => {
+    if (
+      !confirm(
+        owner
+          ? "Выйти из группы? Владелец будет передан другому участнику."
+          : "Выйти из этой группы?",
+      )
+    )
+      return;
+    try {
+      const result = await api<{ deleted?: boolean }>(
+        `groups/${chat.id}/members/${me.id}`,
+        { method: "DELETE", body: "{}" },
+      );
+      onToast(result.deleted ? "Группа закрыта" : "Вы вышли из группы");
+      onLeft?.();
+      onClose();
+    } catch (e) {
+      onToast((e as Error).message);
+    }
+  };
+  return (
+    <aside className="profile-panel group-panel">
+      <div className="panel-top">
+        <b>Группа</b>
+        <button className="icon-btn" onClick={onClose}>
+          <X size={18} />
+        </button>
+      </div>
+      <div className="profile-hero">
+        <Avatar name={chat.title || "Группа"} seed={chat.id} />
+        <h2>{chat.title || "Группа"}</h2>
+        <span>{members.length} участников</span>
+      </div>
+      {canManage && (
+        <button className="panel-action group-add" onClick={add}>
+          <UserPlus size={17} />
+          Добавить участника
+          <Plus size={15} />
+        </button>
+      )}{" "}
+      {role && (
+        <button className="panel-action group-leave" onClick={leave}>
+          <LogOut size={17} />
+          {owner ? "Выйти и передать группу" : "Выйти из группы"}
+        </button>
+      )}
+      <div className="group-members">
+        {members.map((m) => (
+          <div className="group-member" key={m.id}>
+            <button
+              className="member-profile-trigger"
+              onClick={() => openMemberProfile(m)}
+              aria-label={`Открыть профиль ${m.name}`}
+            >
+              <Avatar
+                name={m.name}
+                seed={m.avatar_seed}
+                style={m.avatar_style}
+                size="sm"
+              />
+              <span>
+                <b>{m.name}</b>
+                <small>@{m.username}</small>
+              </span>
+            </button>
+            <em>
+              {m.role === "owner"
+                ? "владелец"
+                : m.role === "admin"
+                  ? "админ"
+                  : "участник"}
+            </em>
+            {canManage && m.id !== me.id && m.role !== "owner" && (
+              <div className="member-actions">
+                {owner &&
+                  (m.role === "admin" ? (
+                    <button onClick={() => act("admins", "DELETE", m.id)}>
+                      Снять админа
+                    </button>
+                  ) : (
+                    <button onClick={() => act("admins", "POST", m.id)}>
+                      Назначить админом
+                    </button>
+                  ))}
+                {owner && (
+                  <button
+                    onClick={() => {
+                      if (confirm(`Передать группу @${m.username}?`))
+                        act("owner", "POST", m.id);
+                    }}
+                  >
+                    Передать
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    if (confirm(`Удалить @${m.username} из группы?`))
+                      act(`members/${m.id}`, "DELETE", m.id);
+                  }}
+                >
+                  <Trash2 size={13} />
+                </button>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+      {memberProfile && (
+        <div className="member-profile-sheet" role="dialog" aria-modal="true">
+          <div className="member-profile-card">
+            <button
+              className="icon-btn member-profile-close"
+              onClick={() => setMemberProfile(null)}
+              aria-label="Закрыть профиль"
+            >
+              <X size={18} />
+            </button>
+            <Avatar
+              name={memberProfile.name}
+              seed={memberProfile.avatar_seed}
+              style={memberProfile.avatar_style}
+              size="lg"
+            />
+            <h3>{memberProfile.name}</h3>
+            <span className="member-profile-username">
+              @{memberProfile.username}
+            </span>
+            <span className="member-profile-status">
+              {memberProfile.is_online ? "● В сети" : "был недавно"}
+            </span>
+            <div className="member-profile-role">
+              {memberProfile.role === "owner"
+                ? "Владелец группы"
+                : memberProfile.role === "admin"
+                  ? "Администратор"
+                  : "Участник группы"}
+            </div>
+            {memberProfile.id !== me.id && (
+              <button
+                className={`panel-action member-block-action ${memberBlocked ? "is-blocked" : ""}`}
+                onClick={toggleMemberBlock}
+              >
+                <Blocks size={17} />
+                {memberBlocked
+                  ? "Разблокировать пользователя"
+                  : "Заблокировать пользователя"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+    </aside>
+  );
+}
+function ProfilePanel({
+  me,
+  chat,
+  onClose,
+  onSettings,
+  onToast,
+}: {
+  me: User;
+  chat?: Chat;
+  onClose: () => void;
+  onSettings: () => void;
+  onToast: (s: string) => void;
+}) {
+  const peer =
+    chat?.kind === "direct" && chat.peer_id
+      ? {
+          id: chat.peer_id,
+          name: chat.peer_name || "Пользователь",
+          username: chat.peer_username || "",
+          bio: "",
+          status: chat.peer_status || "",
+          avatarSeed: chat.peer_avatar_seed || chat.peer_id,
+          avatarStyle: chat.peer_avatar_style || "aurora",
+          avatarEmoji: "",
+          isOnline: Boolean(chat.peer_online),
+          createdAt: "",
+        }
+      : null;
+  const subject = peer || me;
+  const [blocked, setBlocked] = useState(false);
+  useEffect(() => {
+    if (peer)
+      api<{ blocked: boolean }>(`blocks/${peer.id}`)
+        .then((d) => setBlocked(d.blocked))
+        .catch(() => {});
+  }, [peer?.id]);
+  const toggleBlock = async () => {
+    if (!peer) return;
+    try {
+      await api(
+        blocked ? `blocks/${peer.id}` : "blocks",
+        blocked
+          ? { method: "DELETE" }
+          : { method: "POST", body: JSON.stringify({ userId: peer.id }) },
+      );
+      setBlocked(!blocked);
+      onToast(
+        blocked ? "Пользователь разблокирован" : "Пользователь заблокирован",
+      );
+    } catch (e) {
+      onToast((e as Error).message);
+    }
+  };
+  return (
+    <aside className="profile-panel">
+      <div className="panel-top">
+        <b>{peer ? "Профиль собеседника" : "Профиль"}</b>
+        <button className="icon-btn" onClick={onClose}>
+          <X size={18} />
+        </button>
+      </div>
+      <div className="profile-hero">
+        <Avatar
+          name={subject.name}
+          seed={subject.avatarSeed}
+          style={subject.avatarStyle}
+          size="lg"
+          emoji={subject.avatarEmoji}
+        />
+        <h2>{subject.name}</h2>
+        <span>@{subject.username}</span>
+        <p>{subject.bio || "Описание профиля пока не добавлено."}</p>
+      </div>
+      <div className="profile-stats">
+        <div>
+          <b>CloudGram ID</b>
+          <span>{subject.id.slice(0, 8)}</span>
+        </div>
+        <div>
+          <b>Статус</b>
+          <span className="online-text">
+            ● {subject.isOnline ? "В сети" : "был недавно"}
+          </span>
+        </div>
+        {!peer && (
+          <div>
+            <b>С нами с</b>
+            <span>{new Date(me.createdAt).toLocaleDateString("ru-RU")}</span>
+          </div>
+        )}
+      </div>
+      {peer ? (
+        <button className="panel-action danger-action" onClick={toggleBlock}>
+          <Blocks size={17} />
+          {blocked
+            ? "Разблокировать пользователя"
+            : "Заблокировать пользователя"}
+        </button>
+      ) : (
+        <button className="panel-action" onClick={onSettings}>
+          <Settings size={17} />
+          Настройки аккаунта
+          <ChevronDown size={15} />
+        </button>
+      )}
+    </aside>
+  );
+}
+function SettingsModal({
+  me,
+  onClose,
+  onMe,
+  onLogout,
+  onToast,
+}: {
+  me: User;
+  onClose: () => void;
+  onMe: (u: User) => void;
+  onLogout: () => void;
+  onToast: (s: string) => void;
+}) {
+  const [tab, setTab] = useState("profile");
+  const [name, setName] = useState(me.name),
+    [username, setUsername] = useState(me.username),
+    [bio, setBio] = useState(me.bio),
+    [style, setStyle] = useState(me.avatarStyle),
+    [avatarEmoji, setAvatarEmoji] = useState(me.avatarEmoji || "");
+  const [accent, setAccent] = useState(
+    localStorage.getItem("accent") || "violet",
+  );
+  const [theme, setTheme] = useState(localStorage.getItem("theme") || "brand");
+  const [notificationState, setNotificationState] = useState<string>(
+    typeof Notification === "undefined"
+      ? "unsupported"
+      : Notification.permission,
+  );
+  useEffect(() => {
+    document.documentElement.dataset.theme = theme;
+    localStorage.setItem("theme", theme);
+  }, [theme]);
+  const enableNotifications = async () => {
+    if (!("Notification" in window)) {
+      onToast("Этот браузер не поддерживает уведомления");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    setNotificationState(permission);
+    onToast(
+      permission === "granted"
+        ? "Уведомления включены"
+        : "Разрешение на уведомления не выдано",
+    );
+  };
+  const save = async () => {
+    try {
+      const d = await api<{ user: User }>("profile", {
+        method: "PATCH",
+        body: JSON.stringify({
+          name,
+          username,
+          bio,
+          avatarStyle: style,
+          avatarEmoji,
+        }),
+      });
+      await api("settings", {
+        method: "PATCH",
+        body: JSON.stringify({ accent, theme }),
+      });
+      onMe(d.user);
+      onToast("Профиль сохранён");
+      onClose();
+    } catch (e) {
+      onToast((e as Error).message);
+    }
+  };
+  return (
+    <div className="modal-backdrop">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.98 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="settings-modal"
+      >
+        <header>
+          <div>
+            <span className="eyebrow">CLOUDGRAM / SETTINGS</span>
+            <h2>Настройки</h2>
+          </div>
+          <button className="icon-btn" onClick={onClose}>
+            <X />
+          </button>
+        </header>
+        <div className="settings-layout">
+          <nav>
+            {[
+              ["profile", "Профиль", Users],
+              ["privacy", "Конфиденциальность", Shield],
+              ["notifications", "Уведомления", Bell],
+              ["appearance", "Внешний вид", Sparkles],
+              ["blocked", "Заблокированные", Blocks],
+              ["about", "О приложении", Cloud],
+            ].map(([id, label, Icon]) => (
+              <button
+                key={id as string}
+                className={tab === id ? "active" : ""}
+                onClick={() => setTab(id as string)}
+              >
+                <Icon size={16} />
+                {label as string}
+              </button>
+            ))}
+            <button className="logout-link" onClick={onLogout}>
+              <LogOut size={16} />
+              Выйти
+            </button>
+          </nav>
+          <div className="settings-content">
+            {tab === "profile" && (
+              <>
+                <h3>Профиль</h3>
+                <p className="muted">
+                  Публичные данные, которые видят собеседники.
+                </p>
+                <div className="setting-avatar">
+                  <Avatar
+                    name={name}
+                    seed={me.avatarSeed}
+                    style={style}
+                    size="lg"
+                    emoji={avatarEmoji}
+                  />
+                  <div>
+                    <b>Автоматический аватар</b>
+                    <span>Загрузка фотографий отключена</span>
+                  </div>
+                </div>
+                <div className="emoji-avatar-row">
+                  <span>Смайлик аватара</span>
+                  <div>
+                    {["", "🌟", "🚀", "🎮", "🦊", "🌈", "💬", "🔥"].map((e) => (
+                      <button
+                        key={e || "none"}
+                        className={avatarEmoji === e ? "chosen" : ""}
+                        onClick={() => setAvatarEmoji(e)}
+                      >
+                        {e || "Без смайлика"}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <label>
+                  Имя
+                  <input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                  />
+                </label>
+                <label>
+                  Username
+                  <input
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    prefix="@"
+                  />
+                </label>
+                <label>
+                  Описание
+                  <textarea
+                    value={bio}
+                    onChange={(e) => setBio(e.target.value)}
+                    maxLength={280}
+                  />
+                </label>
+                <div className="style-row">
+                  <span>Стиль аватара</span>
+                  <div>
+                    {["aurora", "sunset", "mint", "mono"].map((s) => (
+                      <button
+                        key={s}
+                        className={`style-dot ${s} ${style === s ? "chosen" : ""}`}
+                        onClick={() => setStyle(s)}
+                        aria-label={s}
+                      />
+                    ))}
+                  </div>
+                </div>
+                <button className="primary-btn save-btn" onClick={save}>
+                  Сохранить изменения <Check size={17} />
+                </button>
+              </>
+            )}
+            {tab === "appearance" && (
+              <>
+                <h3>Внешний вид</h3>
+                <p className="muted">
+                  Акцент и режим интерфейса сохраняются для этого устройства.
+                </p>
+                <div className="theme-grid">
+                  {["violet", "ocean", "emerald", "midnight"].map((a) => (
+                    <button
+                      key={a}
+                      className={`theme-card ${a} ${accent === a ? "chosen" : ""}`}
+                      onClick={() => {
+                        setAccent(a);
+                        localStorage.setItem("accent", a);
+                      }}
+                    >
+                      <span />
+                      <b>{a[0].toUpperCase() + a.slice(1)}</b>
+                    </button>
+                  ))}
+                </div>
+                <h3 className="subhead">Режим</h3>
+                <div className="segmented">
+                  {[
+                    ["light", "Светлый"],
+                    ["brand", "Фирменный"],
+                    ["dark", "Тёмный"],
+                  ].map(([value, label]) => (
+                    <button
+                      key={value}
+                      className={theme === value ? "selected" : ""}
+                      onClick={() => setTheme(value)}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </div>
+              </>
+            )}
+            {tab === "notifications" && (
+              <div className="notification-settings">
+                <h3>Уведомления</h3>
+                <p className="muted">
+                  Получайте сообщение от CloudGram, когда кто-то пишет вам.
+                </p>
+                <div className="notification-card">
+                  <Bell size={22} />
+                  <div>
+                    <b>
+                      {notificationState === "granted"
+                        ? "Уведомления включены"
+                        : notificationState === "denied"
+                          ? "Уведомления запрещены"
+                          : "Уведомления выключены"}
+                    </b>
+                    <span>
+                      {notificationState === "denied"
+                        ? "Разрешите их в настройках браузера для этого сайта."
+                        : "Разрешение запрашивается только после нажатия кнопки."}
+                    </span>
+                  </div>
+                </div>
+                {notificationState !== "granted" &&
+                  notificationState !== "denied" && (
+                    <button
+                      className="primary-btn notification-enable"
+                      onClick={enableNotifications}
+                    >
+                      <Bell size={16} /> Включить уведомления
+                    </button>
+                  )}
+                {notificationState === "granted" && (
+                  <p className="notification-hint">
+                    Уведомления приходят, когда вкладка или установленное PWA
+                    открыто в фоне.
+                  </p>
+                )}
+              </div>
+            )}
+            {tab === "about" && (
+              <div className="about-card">
+                <div className="about-icon">
+                  <Cloud size={24} />
+                </div>
+                <h3>Техподдержка CloudGram</h3>
+                <p className="muted">
+                  Нашли ошибку или хотите предложить улучшение? Напишите
+                  напрямую в Telegram.
+                </p>
+                <a
+                  className="primary-btn support-btn"
+                  href={TELEGRAM_SUPPORT_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <MessageCircle size={16} /> Написать в техподдержку
+                </a>
+              </div>
+            )}
+            {tab !== "profile" &&
+              tab !== "appearance" &&
+              tab !== "about" &&
+              tab !== "notifications" && (
+                <div className="coming">
+                  <div>✦</div>
+                  <h3>Раздел настроек</h3>
+                  <p>
+                    Этот раздел уже подготовлен в интерфейсе. Данные сохраняются
+                    в D1 без лишних разрешений.
+                  </p>
+                </div>
+              )}
+          </div>
+        </div>
+        <footer>
+          <span>
+            <LockKeyhole size={14} /> Безопасная сессия
+          </span>
+          <button className="ghost-btn" onClick={onClose}>
+            Закрыть
+          </button>
+        </footer>
+      </motion.div>
+    </div>
+  );
+}
+function IdeaBanner() {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const key = "cloudgram-idea-banner-last";
+    const last = Number(localStorage.getItem(key) || 0);
+    const week = 7 * 24 * 60 * 60 * 1000;
+    if (Date.now() - last < week) return;
+    const timer = window.setTimeout(() => {
+      if (Math.random() < 0.35) {
+        localStorage.setItem(key, String(Date.now()));
+        setVisible(true);
+      }
+    }, 1800);
+    return () => window.clearTimeout(timer);
+  }, []);
+  if (!visible) return null;
+  return (
+    <motion.aside
+      className="idea-banner"
+      initial={{ opacity: 0, y: 24, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      role="dialog"
+      aria-label="Предложить идею"
+    >
+      <button
+        className="idea-close"
+        onClick={() => setVisible(false)}
+        aria-label="Закрыть"
+      >
+        <X size={15} />
+      </button>
+      <div className="idea-icon">
+        <Sparkles size={18} />
+      </div>
+      <div className="idea-copy">
+        <b>Есть идея для CloudGram?</b>
+        <span>Поделитесь мыслью — мы читаем предложения пользователей.</span>
+      </div>
+      <a
+        className="idea-link"
+        href={TELEGRAM_SUPPORT_URL}
+        target="_blank"
+        rel="noreferrer"
+        onClick={() => setVisible(false)}
+      >
+        Поделиться
+      </a>
+    </motion.aside>
+  );
+}
+function App() {
+  useEffect(() => {
+    document.documentElement.dataset.theme =
+      localStorage.getItem("theme") || "brand";
+  }, []);
+  const [me, setMe] = useState<User | null>(null);
+  const [boot, setBoot] = useState(true);
+  const [chats, setChats] = useState<Chat[]>([]);
+  const [selected, setSelected] = useState<Chat | null>(null);
+  const [profileOpen, setProfileOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [groupInfoOpen, setGroupInfoOpen] = useState(false);
+  const [toast, setToast] = useState("");
+  const [search, setSearch] = useState("");
+  const lastGlobalMessageRef = useRef("");
+  const refresh = async () => {
+    try {
+      const d = await api<{ chats: Chat[] }>("chats");
+      setChats(d.chats);
+      if (selected) {
+        const n = d.chats.find((c) => c.id === selected.id);
+        if (n) setSelected(n);
+      }
+    } catch (e) {
+      setToast((e as Error).message);
+    }
+  };
+  useEffect(() => {
+    api<{ user: User | null }>("me")
+      .then((d) => setMe(d.user))
+      .catch(() => {})
+      .finally(() => setBoot(false));
+  }, []);
+  useEffect(() => {
+    if (me) refresh();
+  }, [me]);
+  useEffect(() => {
+    if (!me) return;
+    const source = new EventSource("/api/events");
+    const onMessage = (event: MessageEvent<string>) => {
+      try {
+        const incoming = JSON.parse(event.data) as {
+          id?: string;
+          sender_id?: string;
+          body?: string;
+          chat_id?: string;
+          initial?: boolean;
+        };
+        if (!incoming.id || lastGlobalMessageRef.current === incoming.id)
+          return;
+        lastGlobalMessageRef.current = incoming.id;
+        if (
+          incoming.initial ||
+          incoming.sender_id === me.id ||
+          !("Notification" in window) ||
+          Notification.permission !== "granted"
+        )
+          return;
+        new Notification("Новое сообщение в CloudGram", {
+          body: incoming.body || "Вам написали",
+          icon: "/icon.svg",
+          tag: `cloudgram-${incoming.chat_id || "messages"}`,
+        });
+      } catch {
+        // Ignore malformed notification events.
+      }
+    };
+    source.addEventListener("message", onMessage);
+    return () => source.close();
+  }, [me]);
+  const newChat = async () => {
+    const username = prompt("Введите username собеседника");
+    if (!username) return;
+    try {
+      const d = await api<{ chatId: string }>("chats/direct", {
+        method: "POST",
+        body: JSON.stringify({ username }),
+      });
+      await refresh();
+      setTimeout(
+        () =>
+          setChats((cs) => {
+            const c = cs.find((x) => x.id === d.chatId);
+            if (c) setSelected(c);
+            return cs;
+          }),
+        0,
+      );
+    } catch (e) {
+      setToast((e as Error).message);
+    }
+  };
+  const newGroup = async () => {
+    const name = prompt("Название группы");
+    if (!name?.trim()) return;
+    const description = prompt("Описание группы (необязательно)") || "";
+    const members =
+      prompt("Username участников через запятую (необязательно)") || "";
+    try {
+      const d = await api<{ chatId: string }>("groups", {
+        method: "POST",
+        body: JSON.stringify({
+          name: name.trim(),
+          description,
+          memberUsernames: members
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean),
+        }),
+      });
+      await refresh();
+      setTimeout(
+        () =>
+          setChats((cs) => {
+            const c = cs.find((x) => x.id === d.chatId);
+            if (c) setSelected(c);
+            return cs;
+          }),
+        0,
+      );
+    } catch (e) {
+      setToast((e as Error).message);
+    }
+  };
+  const logout = async () => {
+    await api("auth/logout", { method: "POST" });
+    setMe(null);
+    setSettingsOpen(false);
+  };
+  const searchResults = useMemo(
+    () =>
+      search
+        ? chats.filter(
+            (c) =>
+              (c.peer_name || c.title || "")
+                .toLowerCase()
+                .includes(search.toLowerCase()) ||
+              c.last_body?.toLowerCase().includes(search.toLowerCase()),
+          )
+        : chats,
+    [chats, search],
+  );
+  if (boot)
+    return (
+      <div className="splash">
+        <div className="splash-mark">
+          <Cloud size={26} />
+        </div>
+        <b>CloudGram</b>
+        <span>Connecting…</span>
+      </div>
+    );
+  if (!me) return <Auth onAuth={setMe} />;
+  return (
+    <div className="app-shell">
+      <ChatList
+        chats={searchResults}
+        selected={selected?.id}
+        onSelect={(c) => {
+          setSelected(c);
+          setProfileOpen(false);
+          setGroupInfoOpen(false);
+        }}
+        onNew={newChat}
+        onNewGroup={newGroup}
+        onSearch={setSearch}
+        onSettings={() => setSettingsOpen(true)}
+      />
+      {selected ? (
+        <ChatView
+          key={selected.id}
+          chat={selected}
+          me={me}
+          onBack={() => setSelected(null)}
+          onToast={setToast}
+          onInfo={() => {
+            if (selected.kind === "group") setGroupInfoOpen(true);
+            else setProfileOpen(true);
+          }}
+        />
+      ) : (
+        <section className="welcome">
+          <div className="welcome-glow" />
+          <div className="welcome-mark">
+            <Cloud size={32} />
+          </div>
+          <span className="eyebrow">WELCOME TO CLOUDGRAM</span>
+          <h1>
+            Сообщения, которые
+            <br />
+            <em>остаются лёгкими.</em>
+          </h1>
+          <p>
+            Выберите чат слева или начните новый разговор.
+            <br />
+            Только текст. Никакого лишнего шума.
+          </p>
+          <button className="primary-btn" onClick={newChat}>
+            <Plus size={17} /> Новый чат
+          </button>
+          <div className="feature-row">
+            <span>
+              <Shield size={15} /> Private by default
+            </span>
+            <span>
+              <Sparkles size={15} /> Made on Cloudflare
+            </span>
+          </div>
+          <InstallPrompt />
+        </section>
+      )}
+      {selected &&
+        (selected.kind === "group" ? (
+          <GroupPanel
+            chat={selected}
+            me={me}
+            onClose={() => setSelected(null)}
+            onLeft={() => {
+              setChats((cs) => cs.filter((c) => c.id !== selected.id));
+              setSelected(null);
+              setGroupInfoOpen(false);
+            }}
+            onToast={setToast}
+          />
+        ) : (
+          <ProfilePanel
+            me={me}
+            chat={selected}
+            onClose={() => setProfileOpen(false)}
+            onSettings={() => setSettingsOpen(true)}
+            onToast={setToast}
+          />
+        ))}
+      {selected && selected.kind === "group" && groupInfoOpen && (
+        <div className="mobile-group-overlay">
+          <GroupPanel
+            chat={selected}
+            me={me}
+            onClose={() => setGroupInfoOpen(false)}
+            onLeft={() => {
+              setChats((cs) => cs.filter((c) => c.id !== selected.id));
+              setSelected(null);
+              setGroupInfoOpen(false);
+            }}
+            onToast={setToast}
+          />
+        </div>
+      )}{" "}
+      {selected && selected.kind === "direct" && profileOpen && (
+        <div className="mobile-group-overlay mobile-profile-overlay">
+          <ProfilePanel
+            me={me}
+            chat={selected}
+            onClose={() => setProfileOpen(false)}
+            onSettings={() => setSettingsOpen(true)}
+            onToast={setToast}
+          />
+        </div>
+      )}
+      {!selected && (
+        <button
+          className="floating-profile"
+          onClick={() => setSettingsOpen(true)}
+        >
+          <Avatar
+            name={me.name}
+            seed={me.avatarSeed}
+            style={me.avatarStyle}
+            size="sm"
+          />
+        </button>
+      )}
+      {settingsOpen && (
+        <SettingsModal
+          me={me}
+          onClose={() => setSettingsOpen(false)}
+          onMe={setMe}
+          onLogout={logout}
+          onToast={setToast}
+        />
+      )}
+      <IdeaBanner />
+      <AnimatePresence>
+        {toast && <Toast text={toast} onClose={() => setToast("")} />}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+createRoot(document.getElementById("root")!).render(<App />);

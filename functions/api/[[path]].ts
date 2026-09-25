@@ -21,6 +21,7 @@ type User = {
   last_seen_at: string;
   created_at: string;
   is_online: number;
+  privacy_json?: string;
 };
 type Session = { user: User };
 const MAX_MESSAGE = 4000;
@@ -54,6 +55,13 @@ const safeUser = (u: User | undefined | null) =>
         username: u.username,
         avatarSeed: u.avatar_seed,
         avatarStyle: u.avatar_style,
+        avatarEmoji: (() => {
+          try {
+            return u.privacy_json ? JSON.parse(u.privacy_json).avatarEmoji || "" : "";
+          } catch {
+            return "";
+          }
+        })(),
         bio: u.bio,
         status: u.status,
         lastSeenAt: u.last_seen_at,
@@ -391,6 +399,7 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
         username?: string;
         bio?: string;
         avatarStyle?: string;
+        avatarEmoji?: string;
       }>(request);
       if (!body) throw new HttpError(400, "Некорректное тело");
       const name =
@@ -417,10 +426,23 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
           .first();
         if (taken) throw new HttpError(409, "Username уже занят");
       }
+      let avatarEmoji = "";
+      try {
+        avatarEmoji = String(
+          body.avatarEmoji === undefined
+            ? JSON.parse(me.privacy_json || "{}").avatarEmoji || ""
+            : body.avatarEmoji,
+        ).slice(0, 8);
+      } catch {
+        avatarEmoji = String(body.avatarEmoji || "").slice(0, 8);
+      }
+      const privacyJson = JSON.stringify({
+        avatarEmoji,
+      });
       await env.DB.batch([
         env.DB.prepare(
-          "UPDATE users SET name=?,username=?,bio=?,avatar_style=? WHERE id=?",
-        ).bind(name, username, bio, style, me.id),
+          "UPDATE users SET name=?,username=?,bio=?,avatar_style=?,privacy_json=? WHERE id=?",
+        ).bind(name, username, bio, style, privacyJson, me.id),
         env.DB.prepare(
           "UPDATE username_index SET username=? WHERE user_id=?",
         ).bind(username, me.id),
@@ -569,7 +591,11 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
               .bind(other.user_id, me.id)
               .first())
           )
-            throw new HttpError(403, "Сообщение заблокировано");
+            throw new HttpError(
+              403,
+              "Вы заблокированы и не можете отправить сообщение",
+              "BLOCKED",
+            );
         }
         const mid = id(),
           t = now();
@@ -692,6 +718,14 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
       return json({ ok: true });
     }
     const block = path.match(/^blocks\/([^/]+)$/);
+    if (block && request.method === "GET") {
+      const blocked = await env.DB.prepare(
+        "SELECT 1 FROM user_blocks WHERE user_id=? AND blocked_user_id=?",
+      )
+        .bind(me.id, block[1])
+        .first();
+      return json({ blocked: Boolean(blocked) });
+    }
     if (block && request.method === "DELETE") {
       await env.DB.prepare(
         "DELETE FROM user_blocks WHERE user_id=? AND blocked_user_id=?",
@@ -755,7 +789,27 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
       if (!target) throw new HttpError(404, "Участник не найден");
       const isSelf = groupMember[2] === me.id;
       if (isSelf) {
-        if (actor.role === "owner") throw new HttpError(400, "Передайте владельца перед выходом");
+        if (actor.role === "owner") {
+          const successor = await env.DB.prepare(
+            "SELECT user_id FROM group_members WHERE chat_id=? AND user_id<>? ORDER BY CASE role WHEN 'admin' THEN 0 ELSE 1 END, rowid LIMIT 1",
+          )
+            .bind(groupMember[1], me.id)
+            .first<{ user_id: string }>();
+          if (successor) {
+            await env.DB.batch([
+              env.DB.prepare("UPDATE group_members SET role='member' WHERE chat_id=? AND user_id=?").bind(groupMember[1], me.id),
+              env.DB.prepare("UPDATE chat_members SET role='member' WHERE chat_id=? AND user_id=?").bind(groupMember[1], me.id),
+              env.DB.prepare("UPDATE group_members SET role='owner' WHERE chat_id=? AND user_id=?").bind(groupMember[1], successor.user_id),
+              env.DB.prepare("UPDATE chat_members SET role='owner' WHERE chat_id=? AND user_id=?").bind(groupMember[1], successor.user_id),
+              env.DB.prepare("UPDATE chats SET owner_id=? WHERE id=?").bind(successor.user_id, groupMember[1]),
+              env.DB.prepare("DELETE FROM group_members WHERE chat_id=? AND user_id=?").bind(groupMember[1], me.id),
+              env.DB.prepare("DELETE FROM chat_members WHERE chat_id=? AND user_id=?").bind(groupMember[1], me.id),
+            ]);
+            return json({ ok: true, successorId: successor.user_id });
+          }
+          await env.DB.prepare("DELETE FROM chats WHERE id=?").bind(groupMember[1]).run();
+          return json({ ok: true, deleted: true });
+        }
       } else {
         if (!["owner", "admin"].includes(actor.role)) throw new HttpError(403, "Недостаточно прав", "FORBIDDEN");
         if (actor.role !== "owner" && target.role !== "member") throw new HttpError(403, "Администратор может удалить только обычного участника", "FORBIDDEN");

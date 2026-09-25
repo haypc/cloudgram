@@ -1025,28 +1025,51 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     }
     if (path === "events" && request.method === "GET") {
       const eventChatId = url.searchParams.get("chatId") || "";
-      await chatAllowed(env.DB, me.id, eventChatId);
+      if (eventChatId) {
+        await chatAllowed(env.DB, me.id, eventChatId);
+      }
       const encoder = new TextEncoder();
       let closed = false;
       const stream = new ReadableStream({
         start(controller) {
           let lastMessageId = "";
+          let initialEvent = true;
           let busy = false;
           const send = async () => {
             if (closed) return;
             if (busy) return;
             busy = true;
             try {
-              const latest = await env.DB.prepare(
-                "SELECT id,created_at FROM messages WHERE chat_id=? ORDER BY created_at DESC LIMIT 1",
-              )
-                .bind(eventChatId)
-                .first<{ id: string; created_at: string }>();
+              const latest = eventChatId
+                ? await env.DB.prepare(
+                    "SELECT id,chat_id,sender_id,body,created_at FROM messages WHERE chat_id=? ORDER BY created_at DESC LIMIT 1",
+                  )
+                    .bind(eventChatId)
+                    .first<{
+                      id: string;
+                      chat_id: string;
+                      sender_id: string;
+                      body: string;
+                      created_at: string;
+                    }>()
+                : await env.DB.prepare(
+                    "SELECT m.id,m.chat_id,m.sender_id,m.body,m.created_at FROM messages m JOIN chat_members cm ON cm.chat_id=m.chat_id WHERE cm.user_id=? ORDER BY m.created_at DESC LIMIT 1",
+                  )
+                    .bind(me.id)
+                    .first<{
+                      id: string;
+                      chat_id: string;
+                      sender_id: string;
+                      body: string;
+                      created_at: string;
+                    }>();
               if (latest?.id && latest.id !== lastMessageId) {
                 lastMessageId = latest.id;
+                const payload = { ...latest, initial: initialEvent };
+                initialEvent = false;
                 controller.enqueue(
                   encoder.encode(
-                    `event: message\ndata: ${JSON.stringify(latest)}\n\n`,
+                    `event: message\ndata: ${JSON.stringify(payload)}\n\n`,
                   ),
                 );
               } else {

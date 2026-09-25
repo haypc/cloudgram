@@ -748,12 +748,18 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
     }
     const groupMember = path.match(/^groups\/([^/]+)\/members\/([^/]+)$/);
     if (groupMember && request.method === "DELETE") {
-      const actorRole = await requireGroupAdmin(env.DB, me.id, groupMember[1]);
+      await chatAllowed(env.DB, me.id, groupMember[1]);
+      const actor = await groupRole(env.DB, me.id, groupMember[1]);
       const target = await groupRole(env.DB, groupMember[2], groupMember[1]);
+      if (!actor) throw new HttpError(403, "Вы не состоите в этой группе", "FORBIDDEN");
       if (!target) throw new HttpError(404, "Участник не найден");
-      if (groupMember[2] === me.id) {
-        if (actorRole === "owner") throw new HttpError(400, "Передайте владельца перед выходом");
-      } else if (actorRole !== "owner" && target.role !== "member") throw new HttpError(403, "Администратор может удалить только обычного участника", "FORBIDDEN");
+      const isSelf = groupMember[2] === me.id;
+      if (isSelf) {
+        if (actor.role === "owner") throw new HttpError(400, "Передайте владельца перед выходом");
+      } else {
+        if (!["owner", "admin"].includes(actor.role)) throw new HttpError(403, "Недостаточно прав", "FORBIDDEN");
+        if (actor.role !== "owner" && target.role !== "member") throw new HttpError(403, "Администратор может удалить только обычного участника", "FORBIDDEN");
+      }
       await env.DB.batch([
         env.DB.prepare("DELETE FROM group_members WHERE chat_id=? AND user_id=?").bind(groupMember[1], groupMember[2]),
         env.DB.prepare("DELETE FROM chat_members WHERE chat_id=? AND user_id=?").bind(groupMember[1], groupMember[2]),

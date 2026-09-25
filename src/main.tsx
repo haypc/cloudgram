@@ -45,6 +45,7 @@ const fmt = (s?: string) =>
         minute: "2-digit",
       }).format(new Date(s))
     : "";
+const TELEGRAM_SUPPORT_URL = "https://web.telegram.org/@Vwrdohh";
 let deferredInstallPrompt: any = null;
 function InstallPrompt() {
   const [canInstall, setCanInstall] = useState(false);
@@ -455,6 +456,7 @@ function ChatView({
   const [emoji, setEmoji] = useState(false);
   const [loading, setLoading] = useState(true);
   const endRef = useRef<HTMLDivElement>(null);
+  const latestSeenRef = useRef("");
   const title =
     chat.kind === "direct"
       ? chat.peer_name || "User"
@@ -465,6 +467,7 @@ function ChatView({
         `chats/${chat.id}/messages?limit=60`,
       );
       setMessages(d.messages);
+      latestSeenRef.current = d.messages[d.messages.length - 1]?.id || "";
       await api(`chats/${chat.id}/read`, { method: "POST" });
     } catch (e) {
       onToast((e as Error).message);
@@ -477,7 +480,21 @@ function ChatView({
     const source = new EventSource(
       `/api/events?chatId=${encodeURIComponent(chat.id)}`,
     );
-    source.addEventListener("message", load);
+    const onMessage = (event: MessageEvent<string>) => {
+      try {
+        const incoming = JSON.parse(event.data) as {
+          id?: string;
+          sender_id?: string;
+          body?: string;
+        };
+        if (!incoming.id || latestSeenRef.current === incoming.id) return;
+        latestSeenRef.current = incoming.id;
+      } catch {
+        // Ignore malformed realtime events and keep the chat usable.
+      }
+      load();
+    };
+    source.addEventListener("message", onMessage);
     source.onerror = () => {
       // EventSource reconnects automatically; keep the UI quiet during reconnects.
     };
@@ -691,6 +708,8 @@ function GroupPanel({
     is_online: number;
   };
   const [members, setMembers] = useState<Member[]>([]);
+  const [memberProfile, setMemberProfile] = useState<Member | null>(null);
+  const [memberBlocked, setMemberBlocked] = useState(false);
   const load = async () => {
     try {
       const d = await api<{ members: Member[] }>(`groups/${chat.id}/members`);
@@ -702,6 +721,38 @@ function GroupPanel({
   useEffect(() => {
     load();
   }, [chat.id]);
+  const openMemberProfile = async (member: Member) => {
+    setMemberProfile(member);
+    setMemberBlocked(false);
+    try {
+      const result = await api<{ blocked: boolean }>(`blocks/${member.id}`);
+      setMemberBlocked(result.blocked);
+    } catch {
+      // The profile remains available even if the block status cannot be loaded.
+    }
+  };
+  const toggleMemberBlock = async () => {
+    if (!memberProfile || memberProfile.id === me.id) return;
+    try {
+      await api(
+        memberBlocked ? `blocks/${memberProfile.id}` : "blocks",
+        memberBlocked
+          ? { method: "DELETE" }
+          : {
+              method: "POST",
+              body: JSON.stringify({ userId: memberProfile.id }),
+            },
+      );
+      setMemberBlocked((value) => !value);
+      onToast(
+        memberBlocked
+          ? "Пользователь разблокирован"
+          : "Пользователь заблокирован",
+      );
+    } catch (e) {
+      onToast((e as Error).message);
+    }
+  };
   const role = members.find((m) => m.id === me.id)?.role;
   const canManage = role === "owner" || role === "admin";
   const owner = role === "owner";
@@ -785,16 +836,22 @@ function GroupPanel({
       <div className="group-members">
         {members.map((m) => (
           <div className="group-member" key={m.id}>
-            <Avatar
-              name={m.name}
-              seed={m.avatar_seed}
-              style={m.avatar_style}
-              size="sm"
-            />
-            <div>
-              <b>{m.name}</b>
-              <span>@{m.username}</span>
-            </div>
+            <button
+              className="member-profile-trigger"
+              onClick={() => openMemberProfile(m)}
+              aria-label={`Открыть профиль ${m.name}`}
+            >
+              <Avatar
+                name={m.name}
+                seed={m.avatar_seed}
+                style={m.avatar_style}
+                size="sm"
+              />
+              <span>
+                <b>{m.name}</b>
+                <small>@{m.username}</small>
+              </span>
+            </button>
             <em>
               {m.role === "owner"
                 ? "владелец"
@@ -837,6 +894,50 @@ function GroupPanel({
           </div>
         ))}
       </div>
+      {memberProfile && (
+        <div className="member-profile-sheet" role="dialog" aria-modal="true">
+          <div className="member-profile-card">
+            <button
+              className="icon-btn member-profile-close"
+              onClick={() => setMemberProfile(null)}
+              aria-label="Закрыть профиль"
+            >
+              <X size={18} />
+            </button>
+            <Avatar
+              name={memberProfile.name}
+              seed={memberProfile.avatar_seed}
+              style={memberProfile.avatar_style}
+              size="lg"
+            />
+            <h3>{memberProfile.name}</h3>
+            <span className="member-profile-username">
+              @{memberProfile.username}
+            </span>
+            <span className="member-profile-status">
+              {memberProfile.is_online ? "● В сети" : "был недавно"}
+            </span>
+            <div className="member-profile-role">
+              {memberProfile.role === "owner"
+                ? "Владелец группы"
+                : memberProfile.role === "admin"
+                  ? "Администратор"
+                  : "Участник группы"}
+            </div>
+            {memberProfile.id !== me.id && (
+              <button
+                className={`panel-action member-block-action ${memberBlocked ? "is-blocked" : ""}`}
+                onClick={toggleMemberBlock}
+              >
+                <Blocks size={17} />
+                {memberBlocked
+                  ? "Разблокировать пользователя"
+                  : "Заблокировать пользователя"}
+              </button>
+            )}
+          </div>
+        </div>
+      )}
     </aside>
   );
 }
@@ -880,7 +981,7 @@ function ProfilePanel({
     if (!peer) return;
     try {
       await api(
-        `blocks/${peer.id}`,
+        blocked ? `blocks/${peer.id}` : "blocks",
         blocked
           ? { method: "DELETE" }
           : { method: "POST", body: JSON.stringify({ userId: peer.id }) },
@@ -971,10 +1072,28 @@ function SettingsModal({
     localStorage.getItem("accent") || "violet",
   );
   const [theme, setTheme] = useState(localStorage.getItem("theme") || "brand");
+  const [notificationState, setNotificationState] = useState<string>(
+    typeof Notification === "undefined"
+      ? "unsupported"
+      : Notification.permission,
+  );
   useEffect(() => {
     document.documentElement.dataset.theme = theme;
     localStorage.setItem("theme", theme);
   }, [theme]);
+  const enableNotifications = async () => {
+    if (!("Notification" in window)) {
+      onToast("Этот браузер не поддерживает уведомления");
+      return;
+    }
+    const permission = await Notification.requestPermission();
+    setNotificationState(permission);
+    onToast(
+      permission === "granted"
+        ? "Уведомления включены"
+        : "Разрешение на уведомления не выдано",
+    );
+  };
   const save = async () => {
     try {
       const d = await api<{ user: User }>("profile", {
@@ -1152,16 +1271,79 @@ function SettingsModal({
                 </div>
               </>
             )}
-            {tab !== "profile" && tab !== "appearance" && (
-              <div className="coming">
-                <div>✦</div>
-                <h3>{tab === "about" ? "CloudGram" : "Раздел настроек"}</h3>
-                <p>
-                  Этот раздел уже подготовлен в интерфейсе. Данные сохраняются в
-                  D1 без лишних разрешений.
+            {tab === "notifications" && (
+              <div className="notification-settings">
+                <h3>Уведомления</h3>
+                <p className="muted">
+                  Получайте сообщение от CloudGram, когда кто-то пишет вам.
                 </p>
+                <div className="notification-card">
+                  <Bell size={22} />
+                  <div>
+                    <b>
+                      {notificationState === "granted"
+                        ? "Уведомления включены"
+                        : notificationState === "denied"
+                          ? "Уведомления запрещены"
+                          : "Уведомления выключены"}
+                    </b>
+                    <span>
+                      {notificationState === "denied"
+                        ? "Разрешите их в настройках браузера для этого сайта."
+                        : "Разрешение запрашивается только после нажатия кнопки."}
+                    </span>
+                  </div>
+                </div>
+                {notificationState !== "granted" &&
+                  notificationState !== "denied" && (
+                    <button
+                      className="primary-btn notification-enable"
+                      onClick={enableNotifications}
+                    >
+                      <Bell size={16} /> Включить уведомления
+                    </button>
+                  )}
+                {notificationState === "granted" && (
+                  <p className="notification-hint">
+                    Уведомления приходят, когда вкладка или установленное PWA
+                    открыто в фоне.
+                  </p>
+                )}
               </div>
             )}
+            {tab === "about" && (
+              <div className="about-card">
+                <div className="about-icon">
+                  <Cloud size={24} />
+                </div>
+                <h3>Техподдержка CloudGram</h3>
+                <p className="muted">
+                  Нашли ошибку или хотите предложить улучшение? Напишите
+                  напрямую в Telegram.
+                </p>
+                <a
+                  className="primary-btn support-btn"
+                  href={TELEGRAM_SUPPORT_URL}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  <MessageCircle size={16} /> Написать в техподдержку
+                </a>
+              </div>
+            )}
+            {tab !== "profile" &&
+              tab !== "appearance" &&
+              tab !== "about" &&
+              tab !== "notifications" && (
+                <div className="coming">
+                  <div>✦</div>
+                  <h3>Раздел настроек</h3>
+                  <p>
+                    Этот раздел уже подготовлен в интерфейсе. Данные сохраняются
+                    в D1 без лишних разрешений.
+                  </p>
+                </div>
+              )}
           </div>
         </div>
         <footer>
@@ -1174,6 +1356,56 @@ function SettingsModal({
         </footer>
       </motion.div>
     </div>
+  );
+}
+function IdeaBanner() {
+  const [visible, setVisible] = useState(false);
+  useEffect(() => {
+    const key = "cloudgram-idea-banner-last";
+    const last = Number(localStorage.getItem(key) || 0);
+    const week = 7 * 24 * 60 * 60 * 1000;
+    if (Date.now() - last < week) return;
+    const timer = window.setTimeout(() => {
+      if (Math.random() < 0.35) {
+        localStorage.setItem(key, String(Date.now()));
+        setVisible(true);
+      }
+    }, 1800);
+    return () => window.clearTimeout(timer);
+  }, []);
+  if (!visible) return null;
+  return (
+    <motion.aside
+      className="idea-banner"
+      initial={{ opacity: 0, y: 24, scale: 0.98 }}
+      animate={{ opacity: 1, y: 0, scale: 1 }}
+      role="dialog"
+      aria-label="Предложить идею"
+    >
+      <button
+        className="idea-close"
+        onClick={() => setVisible(false)}
+        aria-label="Закрыть"
+      >
+        <X size={15} />
+      </button>
+      <div className="idea-icon">
+        <Sparkles size={18} />
+      </div>
+      <div className="idea-copy">
+        <b>Есть идея для CloudGram?</b>
+        <span>Поделитесь мыслью — мы читаем предложения пользователей.</span>
+      </div>
+      <a
+        className="idea-link"
+        href={TELEGRAM_SUPPORT_URL}
+        target="_blank"
+        rel="noreferrer"
+        onClick={() => setVisible(false)}
+      >
+        Поделиться
+      </a>
+    </motion.aside>
   );
 }
 function App() {
@@ -1190,6 +1422,7 @@ function App() {
   const [groupInfoOpen, setGroupInfoOpen] = useState(false);
   const [toast, setToast] = useState("");
   const [search, setSearch] = useState("");
+  const lastGlobalMessageRef = useRef("");
   const refresh = async () => {
     try {
       const d = await api<{ chats: Chat[] }>("chats");
@@ -1210,6 +1443,40 @@ function App() {
   }, []);
   useEffect(() => {
     if (me) refresh();
+  }, [me]);
+  useEffect(() => {
+    if (!me) return;
+    const source = new EventSource("/api/events");
+    const onMessage = (event: MessageEvent<string>) => {
+      try {
+        const incoming = JSON.parse(event.data) as {
+          id?: string;
+          sender_id?: string;
+          body?: string;
+          chat_id?: string;
+          initial?: boolean;
+        };
+        if (!incoming.id || lastGlobalMessageRef.current === incoming.id)
+          return;
+        lastGlobalMessageRef.current = incoming.id;
+        if (
+          incoming.initial ||
+          incoming.sender_id === me.id ||
+          !("Notification" in window) ||
+          Notification.permission !== "granted"
+        )
+          return;
+        new Notification("Новое сообщение в CloudGram", {
+          body: incoming.body || "Вам написали",
+          icon: "/icon.svg",
+          tag: `cloudgram-${incoming.chat_id || "messages"}`,
+        });
+      } catch {
+        // Ignore malformed notification events.
+      }
+    };
+    source.addEventListener("message", onMessage);
+    return () => source.close();
   }, [me]);
   const newChat = async () => {
     const username = prompt("Введите username собеседника");
@@ -1422,6 +1689,7 @@ function App() {
           onToast={setToast}
         />
       )}
+      <IdeaBanner />
       <AnimatePresence>
         {toast && <Toast text={toast} onClose={() => setToast("")} />}
       </AnimatePresence>

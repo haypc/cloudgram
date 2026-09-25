@@ -183,6 +183,15 @@ async function chatAllowed(db: Db, userId: string, chatId: string) {
   if (!chat) throw new HttpError(404, "Чат не найден");
   return chat;
 }
+async function groupRole(db: Db, userId: string, chatId: string) {
+  return db.prepare("SELECT role FROM group_members WHERE chat_id=? AND user_id=?").bind(chatId, userId).first<{role:string}>();
+}
+async function requireGroupAdmin(db: Db, userId: string, chatId: string, ownerOnly = false) {
+  await chatAllowed(db, userId, chatId);
+  const member = await groupRole(db, userId, chatId);
+  if (!member || (ownerOnly ? member.role !== "owner" : !["owner", "admin"].includes(member.role))) throw new HttpError(403, "Недостаточно прав для управления группой", "FORBIDDEN");
+  return member.role;
+}
 async function rateLimit(
   request: Request,
   key: string,
@@ -717,6 +726,79 @@ export const onRequest: PagesFunction<Env> = async ({ request, env }) => {
         )
         .run();
       return json({ ok: true });
+    }
+    const groupMembers = path.match(/^groups\/([^/]+)\/members$/);
+    if (groupMembers && request.method === "GET") {
+      await chatAllowed(env.DB, me.id, groupMembers[1]);
+      const rows = await env.DB.prepare(`SELECT u.id,u.name,u.username,u.avatar_seed,u.avatar_style,u.status,u.is_online,gm.role,gm.can_post FROM group_members gm JOIN users u ON u.id=gm.user_id WHERE gm.chat_id=? ORDER BY CASE gm.role WHEN 'owner' THEN 0 WHEN 'admin' THEN 1 ELSE 2 END,u.name LIMIT 200`).bind(groupMembers[1]).all<any>();
+      return json({members: rows.results || []});
+    }
+    if (groupMembers && request.method === "POST") {
+      await requireGroupAdmin(env.DB, me.id, groupMembers[1]);
+      const body = await readJson<{username:string}>(request);
+      const username = normalizeUsername(assertString(body?.username, "username", 25));
+      const user = await env.DB.prepare("SELECT id FROM users WHERE username=?").bind(username).first<{id:string}>();
+      if (!user) throw new HttpError(404, "Пользователь не найден");
+      if (await env.DB.prepare("SELECT 1 FROM group_members WHERE chat_id=? AND user_id=?").bind(groupMembers[1], user.id).first()) throw new HttpError(409, "Пользователь уже в группе", "CONFLICT");
+      await env.DB.batch([
+        env.DB.prepare("INSERT INTO chat_members(chat_id,user_id,role,joined_at) VALUES(?,?,?,?)").bind(groupMembers[1], user.id, "member", now()),
+        env.DB.prepare("INSERT INTO group_members(chat_id,user_id,role) VALUES(?,?,?)").bind(groupMembers[1], user.id, "member"),
+      ]);
+      return json({ok:true});
+    }
+    const groupMember = path.match(/^groups\/([^/]+)\/members\/([^/]+)$/);
+    if (groupMember && request.method === "DELETE") {
+      const actorRole = await requireGroupAdmin(env.DB, me.id, groupMember[1]);
+      const target = await groupRole(env.DB, groupMember[2], groupMember[1]);
+      if (!target) throw new HttpError(404, "Участник не найден");
+      if (groupMember[2] === me.id) {
+        if (actorRole === "owner") throw new HttpError(400, "Передайте владельца перед выходом");
+      } else if (actorRole !== "owner" && target.role !== "member") throw new HttpError(403, "Администратор может удалить только обычного участника", "FORBIDDEN");
+      await env.DB.batch([
+        env.DB.prepare("DELETE FROM group_members WHERE chat_id=? AND user_id=?").bind(groupMember[1], groupMember[2]),
+        env.DB.prepare("DELETE FROM chat_members WHERE chat_id=? AND user_id=?").bind(groupMember[1], groupMember[2]),
+      ]);
+      return json({ok:true});
+    }
+    const groupAdmins = path.match(/^groups\/([^/]+)\/admins$/);
+    if (groupAdmins && request.method === "POST") {
+      await requireGroupAdmin(env.DB, me.id, groupAdmins[1], true);
+      const body = await readJson<{userId:string}>(request);
+      const target = await groupRole(env.DB, body?.userId || "", groupAdmins[1]);
+      if (!target) throw new HttpError(404, "Участник не найден");
+      if (target.role === "owner") throw new HttpError(400, "Владелец уже имеет максимальные права");
+      await env.DB.batch([
+        env.DB.prepare("UPDATE group_members SET role='admin' WHERE chat_id=? AND user_id=?").bind(groupAdmins[1], body!.userId),
+        env.DB.prepare("UPDATE chat_members SET role='admin' WHERE chat_id=? AND user_id=?").bind(groupAdmins[1], body!.userId),
+      ]);
+      return json({ok:true});
+    }
+    if (groupAdmins && request.method === "DELETE") {
+      await requireGroupAdmin(env.DB, me.id, groupAdmins[1], true);
+      const body = await readJson<{userId:string}>(request);
+      const target = await groupRole(env.DB, body?.userId || "", groupAdmins[1]);
+      if (!target) throw new HttpError(404, "Участник не найден");
+      if (target.role === "owner") throw new HttpError(400, "Нельзя снять владельца");
+      await env.DB.batch([
+        env.DB.prepare("UPDATE group_members SET role='member' WHERE chat_id=? AND user_id=?").bind(groupAdmins[1], body!.userId),
+        env.DB.prepare("UPDATE chat_members SET role='member' WHERE chat_id=? AND user_id=?").bind(groupAdmins[1], body!.userId),
+      ]);
+      return json({ok:true});
+    }
+    const groupOwner = path.match(/^groups\/([^/]+)\/owner$/);
+    if (groupOwner && request.method === "POST") {
+      await requireGroupAdmin(env.DB, me.id, groupOwner[1], true);
+      const body = await readJson<{userId:string}>(request);
+      const target = await groupRole(env.DB, body?.userId || "", groupOwner[1]);
+      if (!target) throw new HttpError(404, "Новый владелец должен быть участником группы");
+      await env.DB.batch([
+        env.DB.prepare("UPDATE group_members SET role='admin' WHERE chat_id=? AND user_id=?").bind(groupOwner[1], me.id),
+        env.DB.prepare("UPDATE chat_members SET role='admin' WHERE chat_id=? AND user_id=?").bind(groupOwner[1], me.id),
+        env.DB.prepare("UPDATE group_members SET role='owner' WHERE chat_id=? AND user_id=?").bind(groupOwner[1], body!.userId),
+        env.DB.prepare("UPDATE chat_members SET role='owner' WHERE chat_id=? AND user_id=?").bind(groupOwner[1], body!.userId),
+        env.DB.prepare("UPDATE chats SET owner_id=? WHERE id=?").bind(body!.userId, groupOwner[1]),
+      ]);
+      return json({ok:true});
     }
     if (path === "groups" && request.method === "POST") {
       const body = await readJson<{
